@@ -4,11 +4,11 @@ SeismoNet is a deep learning framework designed for time-frequency analysis and 
 Repository Structure:
 This repository contains all the necessary files required for training, testing, and evaluating the SeismoNet model.
 Before running the project, install the necessary dependencies:
-Requirements include: pip install -r requirements.txt
-TensorFlow/PyTorch
-NumPy
-SciPy
-OpenCV
-Matplotlib
-Pandas
-Seaborn
+Requirements include:
+TensorFlow/PyTorch,
+NumPy,
+SciPy,
+OpenCV,
+Matplotlib,
+Pandas,
+Seaborn.
