@@ -7,7 +7,8 @@ import h5py
 from tqdm import tqdm
 from sklearn.metrics import mean_squared_error
 from scipy.stats import pearsonr
-import joblib
+from scipy.signal import convolve
+from Custom_Wavelet_NSWF import custom_wavelet  # Import NSWF function
 
 # Define dataset paths
 DATA_DIR = "seismonet_data"
@@ -21,10 +22,6 @@ def load_model():
         raise FileNotFoundError(f"Trained model not found at {MODEL_PATH}. Please train it first.")
     return tf.keras.models.load_model(MODEL_PATH)
 
-# Load trained NSWF wavelet
-def load_trained_wavelet():
-    return joblib.load("trained_wavelet_nswf.pkl")
-
 # Load NCS India Dataset
 def load_ncs_data(ncs_file_path, num_samples=1000):
     signals = []
@@ -33,8 +30,9 @@ def load_ncs_data(ncs_file_path, num_samples=1000):
             st = read(ncs_file_path)  # Read seismograph data
             tr = st[0]  # Extract first trace
             data = tr.data
+            # Ensure consistent signal length
             if len(data) > 4000:
-                data = data[:4000]  # Truncate or pad to match 4000 samples
+                data = data[:4000]
             elif len(data) < 4000:
                 data = np.pad(data, (0, 4000 - len(data)), 'constant')
             signals.append(data)
@@ -50,8 +48,9 @@ def load_stead_data(stead_file_path, num_samples=1000):
         for i in tqdm(range(num_samples), desc="Loading STEAD Data"):
             try:
                 data = waveforms[i]
+                # Ensure consistent signal length
                 if len(data) > 4000:
-                    data = data[:4000]  # Truncate or pad to match 4000 samples
+                    data = data[:4000]
                 elif len(data) < 4000:
                     data = np.pad(data, (0, 4000 - len(data)), 'constant')
                 signals.append(data)
@@ -59,20 +58,36 @@ def load_stead_data(stead_file_path, num_samples=1000):
                 continue
     return np.array(signals).reshape((len(signals), 4000, 1))
 
+# Apply NSWF-Based Denoising using Convolution
+def apply_nswf_denoising(signal, fs=100):
+    """
+    Uses the Non-Standard Wavelet Function (NSWF) to denoise the signal.
+    """
+    n = np.arange(-len(signal) // 2, len(signal) // 2)
+    trained_wavelet = custom_wavelet(n, fs=fs)  # Generate NSWF dynamically
+    trained_wavelet = np.real(trained_wavelet)  # Use real part for filtering
+
+    # Perform convolution-based wavelet denoising
+    denoised_signal = convolve(signal, trained_wavelet, mode="same") / np.sum(trained_wavelet)
+    return denoised_signal
+
 # Evaluate model performance
 def evaluate_model(model, dataset, dataset_name):
     print(f"\nEvaluating SeismoNet on {dataset_name} dataset...")
     predictions = model.predict(dataset)
-    
+
+    # Apply NSWF-Based Denoising
+    nswf_denoised = np.array([apply_nswf_denoising(sig.flatten()) for sig in predictions])
+
     # Compute Metrics
-    mse = mean_squared_error(dataset.flatten(), predictions.flatten())
-    pcc, _ = pearsonr(dataset.flatten(), predictions.flatten())
+    mse = mean_squared_error(dataset.flatten(), nswf_denoised.flatten())
+    pcc, _ = pearsonr(dataset.flatten(), nswf_denoised.flatten())
 
     print(f"\nResults for {dataset_name}:")
     print(f"Mean Squared Error (MSE): {mse:.6f}")
     print(f"Pearson Correlation Coefficient (PCC): {pcc:.4f}")
 
-    return predictions, mse, pcc
+    return nswf_denoised, mse, pcc
 
 # Plot test results
 def plot_results(original, noisy, denoised, dataset_name, sample_idx=0):
@@ -94,7 +109,7 @@ def plot_results(original, noisy, denoised, dataset_name, sample_idx=0):
     plt.subplot(3, 1, 3)
     plt.plot(denoised[sample_idx], label="Denoised Signal", color='g')
     plt.legend()
-    plt.title(f"{dataset_name} - SeismoNet Denoised Signal")
+    plt.title(f"{dataset_name} - SeismoNet + NSWF Denoised Signal")
 
     plt.tight_layout()
     plt.show()
