@@ -1,12 +1,44 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Dense, Reshape, UpSampling1D, Conv1DTranspose, Dropout, Input
+from tensorflow.keras.layers import Dense, Reshape, UpSampling1D, Dropout, Input
 from tensorflow.keras.models import Model
+from Custom_Wavelet_NSWF import custom_wavelet  # Import your wavelet function
 
-# Step 1: Define the Decoder Architecture
+# Step 1: Define Custom 1D Transposed Wavelet Convolution Layer
+class WaveletConv1DTranspose(tf.keras.layers.Layer):
+    """
+    Custom 1D Transposed Wavelet Convolution Layer using Non-Standard Wavelet Function (NSWF).
+    """
+    def __init__(self, filters, kernel_size, strides=1, padding="same", fs=100):
+        super(WaveletConv1DTranspose, self).__init__()
+        self.filters = filters
+        self.kernel_size = kernel_size
+        self.strides = strides
+        self.padding = padding
+        self.fs = fs  # Sampling frequency
+
+        # Generate the wavelet kernel
+        n = np.arange(-kernel_size // 2, kernel_size // 2 + 1, 1)
+        wavelet_values = custom_wavelet(n, fs=self.fs)  # Generate NSWF
+        wavelet_values = np.real(wavelet_values)  # Use real part for reconstruction
+
+        # Ensure correct shape for TensorFlow kernel initialization
+        wavelet_values = np.expand_dims(wavelet_values, axis=-1)  # Shape: (kernel_size, 1)
+        wavelet_values = np.tile(wavelet_values, (1, filters))  # Shape: (kernel_size, filters)
+
+        self.kernel = tf.Variable(initial_value=tf.convert_to_tensor(wavelet_values, dtype=tf.float32), 
+                                  trainable=True, name="wavelet_transpose_kernel")
+
+    def call(self, inputs):
+        return tf.nn.conv1d_transpose(inputs, self.kernel, output_shape=[tf.shape(inputs)[0], 
+                                                                         tf.shape(inputs)[1] * self.strides, 
+                                                                         self.filters], 
+                                      strides=self.strides, padding=self.padding.upper())
+
+# Step 2: Define the Decoder Architecture
 def build_seismonet_decoder(input_shape=(512,)):
     """
-    Builds the decoder structure of SeismoNet.
+    Builds the decoder structure of SeismoNet using wavelet-based transposed convolution.
 
     Parameters:
         input_shape (tuple): Shape of the encoded latent feature vector.
@@ -23,24 +55,24 @@ def build_seismonet_decoder(input_shape=(512,)):
     x = UpSampling1D(size=2)(x)  # Scale factor S=2
     x = Dropout(0.3)(x)
 
-    # First Deconvolutional Layer (Transposed Convolution)
-    x = Conv1DTranspose(filters=128, kernel_size=5, strides=1, padding="same", activation="relu")(x)
+    # First Deconvolutional Layer (Wavelet-Based Transposed Convolution)
+    x = WaveletConv1DTranspose(filters=128, kernel_size=5, strides=1, padding="same")(x)
     x = UpSampling1D(size=2)(x)
     x = Dropout(0.3)(x)
 
-    # Second Deconvolutional Layer (Transposed Convolution)
-    x = Conv1DTranspose(filters=64, kernel_size=7, strides=1, padding="same", activation="relu")(x)
+    # Second Deconvolutional Layer (Wavelet-Based Transposed Convolution)
+    x = WaveletConv1DTranspose(filters=64, kernel_size=7, strides=1, padding="same")(x)
     x = UpSampling1D(size=2)(x)
     x = Dropout(0.2)(x)
 
     # Reconstruction Layer (Final Output)
-    x = Conv1DTranspose(filters=1, kernel_size=7, strides=1, padding="same", activation="linear")(x)
+    x = WaveletConv1DTranspose(filters=1, kernel_size=7, strides=1, padding="same")(x)
 
     # Decoder Model
     model = Model(inputs=inputs, outputs=x, name="SeismoNet_Decoder")
     return model
 
-# Step 2: Define the Wavelet-Based Loss Function
+# Step 3: Define the Wavelet-Based Loss Function
 def wavelet_loss(y_true, y_pred, lambda_reg=0.001):
     """
     Computes the total loss function with wavelet-based regularization.
@@ -58,7 +90,7 @@ def wavelet_loss(y_true, y_pred, lambda_reg=0.001):
     reg_loss = lambda_reg * tf.reduce_sum(tf.square(wavelet_coeffs))  # L2 Regularization
     return mse_loss + reg_loss
 
-# Step 3: Implement Bi-Directional Conjugate Gradient (BiDCG) Optimizer
+# Step 4: Implement Bi-Directional Conjugate Gradient (BiDCG) Optimizer
 class BiDCGOptimizer(tf.keras.optimizers.Optimizer):
     """
     Implements the Bi-Directional Conjugate Gradient (BiDCG) optimization algorithm.
@@ -79,7 +111,7 @@ class BiDCGOptimizer(tf.keras.optimizers.Optimizer):
         """
         var.scatter_sub(self.learning_rate * grad)
 
-# Step 4: Training Function with BiDCG
+# Step 5: Training Function with BiDCG
 def train_decoder(model, x_train, y_train, epochs=50, batch_size=32):
     """
     Trains the SeismoNet decoder using Bi-Directional Conjugate Gradient.
@@ -100,7 +132,7 @@ def train_decoder(model, x_train, y_train, epochs=50, batch_size=32):
     history = model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1)
     return history
 
-# Step 5: Loss Function Evolution Visualization
+# Step 6: Loss Function Evolution Visualization
 import matplotlib.pyplot as plt
 
 def plot_loss(history):
@@ -121,7 +153,7 @@ def plot_loss(history):
     plt.legend()
     plt.show()
 
-# Step 6: Run the Model Training (Example Usage)
+# Step 7: Run the Model Training (Example Usage)
 if __name__ == "__main__":
     # Generate synthetic data for testing
     N = 1024  # Number of time samples
