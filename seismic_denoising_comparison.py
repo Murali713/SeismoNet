@@ -2,51 +2,82 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.signal as signal
 import pywt
-import joblib
 from scipy.ndimage import median_filter
 from scipy.signal import wiener, convolve
+from Custom_Wavelet_NSWF import custom_wavelet  # Import your NSWF function
 
-# Load the trained wavelet from Custom_Wavelet_NSWF.py
-def load_trained_wavelet():
+# Step 1: Generate Seismic Signal (Using Ricker Wavelet)
+def generate_seismic_signal(fs=100, duration=30, fn=4, zeta=0.3):
     """
-    Loads the trained wavelet coefficients from the saved NSWF model.
+    Generates a synthetic seismic ground motion signal using a modulated Ricker wavelet.
+
+    Parameters:
+        fs (int): Sampling frequency.
+        duration (int): Duration of the earthquake motion (seconds).
+        fn (float): Dominant frequency of the earthquake excitation (Hz).
+        zeta (float): Bandwidth parameter.
+
     Returns:
-        trained_wavelet (array): Trained Non-Standard Wavelet Function.
+        t (array): Time vector.
+        s_n (array): Seismic ground motion signal.
     """
-    trained_wavelet = joblib.load("trained_wavelet_nswf.pkl")  # Ensure this file is available
-    return trained_wavelet
+    t = np.linspace(0, duration, fs * duration)
+    ricker_wavelet = signal.ricker(len(t), fn * fs / (2 * np.sqrt(np.pi * zeta)))  # Ricker wavelet (approximation)
+    
+    # Envelope function similar to MATLAB's 'seismSim' characteristics
+    envelope = np.exp(-((t - 0.4 * duration) ** 2) / (2 * (0.3 * duration) ** 2))
 
-# Generate Synthetic Seismic Signal using Ricker Wavelet
-def generate_seismic_signal(fs=100, duration=30, f0=10):
-    t = np.linspace(0, duration, int(fs * duration))
-    s_n = (1 - 2 * (np.pi * f0 * t)**2) * np.exp(- (np.pi * f0 * t)**2)
+    s_n = 0.3 * ricker_wavelet * envelope  # Scale with standard deviation
     return t, s_n
 
-# Add White Gaussian Noise (AWGN)
+# Step 2: Add White Gaussian Noise (AWGN)
 def add_awgn(signal, snr_db):
+    """
+    Adds White Gaussian Noise (AWGN) to a signal.
+
+    Parameters:
+        signal (array): Input clean signal.
+        snr_db (float): Signal-to-noise ratio (SNR) in dB.
+
+    Returns:
+        noisy_signal (array): Noisy signal with AWGN.
+    """
     noise_power = np.var(signal) / (10 ** (snr_db / 10))
     noise = np.random.normal(0, np.sqrt(noise_power), signal.shape)
     return signal + noise
 
-# Apply NSWF-based Denoising using the trained wavelet
-def apply_nswf_denoising(signal, trained_wavelet):
+# Step 3: Apply NSWF-Based Denoising using Convolution
+def apply_nswf_denoising(signal, fs):
     """
-    Uses the trained Non-Standard Wavelet Function (NSWF) to denoise the signal.
+    Uses the Non-Standard Wavelet Function (NSWF) to denoise the signal.
 
     Parameters:
         signal (array): Noisy input signal.
-        trained_wavelet (array): Learned wavelet from SeismoNet.
+        fs (int): Sampling frequency.
 
     Returns:
         denoised_signal (array): Filtered signal.
     """
-    wavelet_coeffs = np.fft.fft(signal) * np.fft.fft(trained_wavelet)
-    threshold = np.mean(np.abs(wavelet_coeffs)) + 0.5 * np.std(wavelet_coeffs)
-    wavelet_coeffs[np.abs(wavelet_coeffs) < threshold] = 0
-    return np.real(np.fft.ifft(wavelet_coeffs))
+    n = np.arange(-len(signal) // 2, len(signal) // 2)
+    trained_wavelet = custom_wavelet(n, fs=fs)  # Generate NSWF dynamically
+    trained_wavelet = np.real(trained_wavelet)  # Use real part for filtering
 
-# Apply Different Denoising Methods
-def denoise_signal(x_n, trained_wavelet):
+    # Perform convolution-based wavelet denoising
+    denoised_signal = convolve(signal, trained_wavelet, mode="same") / np.sum(trained_wavelet)
+    return denoised_signal
+
+# Step 4: Apply Different Denoising Methods
+def denoise_signal(x_n, fs):
+    """
+    Applies various denoising methods including NSWF.
+
+    Parameters:
+        x_n (array): Noisy input signal.
+        fs (int): Sampling frequency.
+
+    Returns:
+        tuple: Denoised signals from different methods.
+    """
     # Wiener Filtering
     x_wiener = wiener(x_n, mysize=5)
     
@@ -66,24 +97,21 @@ def denoise_signal(x_n, trained_wavelet):
     x_gaussian = signal.gaussian(len(x_n), std=5)
     x_gaussian = convolve(x_n, x_gaussian, mode='same') / np.sum(x_gaussian)
 
-    # Proposed NSWF Filtering using Trained Wavelet
-    x_nswf = apply_nswf_denoising(x_n, trained_wavelet)
+    # Proposed NSWF Filtering
+    x_nswf = apply_nswf_denoising(x_n, fs)
 
     return x_wiener, x_median, x_soft, x_hard, x_gaussian, x_nswf
 
-# Main Execution
+# Step 5: Main Execution
 fs = 100  # Sampling frequency
-duration = 30  # Signal duration
-snr_db = 30  # Noise level
+duration = 30  # Duration of the earthquake signal
+snr_db = 30  # Noise level in dB
 
-t, s_n = generate_seismic_signal(fs, duration)
-x_n = add_awgn(s_n, snr_db)
-
-# Load the trained NSWF
-trained_wavelet = load_trained_wavelet()
+t, s_n = generate_seismic_signal(fs, duration)  # Generate seismic signal
+x_n = add_awgn(s_n, snr_db)  # Add noise
 
 # Apply Denoising Methods
-x_wiener, x_median, x_soft, x_hard, x_gaussian, x_nswf = denoise_signal(x_n, trained_wavelet)
+x_wiener, x_median, x_soft, x_hard, x_gaussian, x_nswf = denoise_signal(x_n, fs)
 
 # Compute Wavelet Coefficient Differences
 coeff_diff_wiener = np.abs(x_n - x_wiener)
@@ -93,19 +121,19 @@ coeff_diff_hard = np.abs(x_n - x_hard)
 coeff_diff_gaussian = np.abs(x_n - x_gaussian)
 coeff_diff_nswf = np.abs(x_n - x_nswf)
 
-# Plot Results (12 subplots)
+# Step 6: Plot Results (12 subplots)
 plt.figure(figsize=(14, 14))
 
 # Original and Noisy Signal
 plt.subplot(6, 2, 1)
-plt.plot(t, s_n, label="Clean Signal", color='b')
+plt.plot(t, s_n, label="Clean Seismic Signal", color='b')
 plt.legend()
-plt.title("Synthetic Seismic Signal s(n)")
+plt.title("Earthquake Ground Motion Simulation")
 
 plt.subplot(6, 2, 2)
 plt.plot(t, x_n, label="Noisy Signal (s(n) + AWGN)", color='r', alpha=0.6)
 plt.legend()
-plt.title("Noisy Signal (30dB SNR)")
+plt.title("Noisy Seismic Signal (30dB SNR)")
 
 # Wiener Filter
 plt.subplot(6, 2, 3)
