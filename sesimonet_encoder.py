@@ -2,22 +2,32 @@ import tensorflow as tf
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, Input
 from tensorflow.keras.models import Model
 import numpy as np
+from Custom_Wavelet_NSWF import custom_wavelet  # Importing your wavelet function
 
 # Step 1: Define Custom Wavelet Convolution Layer
 class WaveletConv1D(tf.keras.layers.Layer):
     """
     Custom 1D Wavelet Convolution Layer using a Non-Standard Wavelet Function (NSWF).
     """
-    def __init__(self, filters, kernel_size, strides=1, padding="same"):
+    def __init__(self, filters, kernel_size, strides=1, padding="same", fs=100):
         super(WaveletConv1D, self).__init__()
         self.filters = filters
         self.kernel_size = kernel_size
         self.strides = strides
         self.padding = padding
-        self.kernel = self.add_weight(name="wavelet_kernel",
-                                      shape=(kernel_size, 1, filters),
-                                      initializer="glorot_uniform",
-                                      trainable=True)
+        self.fs = fs  # Sampling frequency
+
+        # Generate the initial wavelet kernel using NSWF
+        n = np.arange(-kernel_size // 2, kernel_size // 2 + 1, 1)
+        wavelet_values = custom_wavelet(n, fs=self.fs)  # Generate NSWF
+        wavelet_values = np.real(wavelet_values)  # Use real part for convolution
+
+        # Ensure correct shape for TensorFlow kernel initialization
+        wavelet_values = np.expand_dims(wavelet_values, axis=-1)  # Shape: (kernel_size, 1)
+        wavelet_values = np.tile(wavelet_values, (1, filters))  # Shape: (kernel_size, filters)
+
+        self.kernel = tf.Variable(initial_value=tf.convert_to_tensor(wavelet_values, dtype=tf.float32), 
+                                  trainable=True, name="wavelet_kernel")
 
     def call(self, inputs):
         return tf.nn.conv1d(inputs, self.kernel, stride=self.strides, padding=self.padding.upper())
