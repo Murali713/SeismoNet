@@ -1,17 +1,22 @@
 import numpy as np
+import matplotlib.pyplot as plt
+from Custom_Wavelet_NSWF import custom_wavelet  # Import your wavelet function
 
-# Step 1: Initialize Variables
-def initialize_weights(N):
+# Step 1: Initialize Weights using NSWF
+def initialize_weights(N, fs=100):
     """
-    Initializes weights as wavelet coefficients.
+    Initializes weights as wavelet coefficients using NSWF.
 
     Parameters:
         N (int): Number of coefficients.
+        fs (int): Sampling frequency.
 
     Returns:
         w (array): Initialized weight vector.
     """
-    return np.random.randn(N)
+    n = np.arange(-N // 2, N // 2)
+    wavelet_values = custom_wavelet(n, fs=fs)
+    return np.real(wavelet_values)  # Use real part for initialization
 
 # Step 2: Compute Loss Function and Gradient
 def compute_loss(w, x, mu, k, sigma_local, lambda_reg):
@@ -50,10 +55,10 @@ def compute_gradient(w, x, mu, k, sigma_local, lambda_reg):
     """
     return 2 * (w - (mu + k * sigma_local) + lambda_reg * w - x)
 
-# Step 3: Conjugate Gradient Initialization
-def bidirectional_cg_optimizer(x, N, alpha=0.01, epsilon=1e-6, max_iter=100):
+# Step 3: Bi-Directional Conjugate Gradient (BiDCG) Optimizer
+def bidirectional_cg_optimizer(x, N, alpha=0.01, epsilon=1e-6, max_iter=100, fs=100):
     """
-    Implements the Bi-Directional Conjugate Gradient (BiDCG) optimizer.
+    Implements the Bi-Directional Conjugate Gradient (BiDCG) optimizer with NSWF.
 
     Parameters:
         x (array): Observed data.
@@ -61,13 +66,14 @@ def bidirectional_cg_optimizer(x, N, alpha=0.01, epsilon=1e-6, max_iter=100):
         alpha (float): Learning rate.
         epsilon (float): Convergence threshold.
         max_iter (int): Maximum iterations.
+        fs (int): Sampling frequency for NSWF.
 
     Returns:
         w (array): Optimized weight vector.
         loss_history (list): Loss evolution over iterations.
     """
-    # Initialize weights
-    w = initialize_weights(N)
+    # Initialize weights with NSWF
+    w = initialize_weights(N, fs)
     mu = np.mean(w)
     sigma_local = np.std(w)
     lambda_reg = 0.001  # Regularization parameter
@@ -105,8 +111,8 @@ def bidirectional_cg_optimizer(x, N, alpha=0.01, epsilon=1e-6, max_iter=100):
         else:
             d = -gradient + beta_PR * d
 
-        # Line Search for Learning Rate
-        alpha = np.dot(gradient, d) / np.dot(d, d)
+        # Adaptive Learning Rate Based on Wavelet Variance
+        alpha = np.dot(gradient, d) / (np.dot(d, d) + np.var(w))
 
         # Update Weights
         w += alpha * d
@@ -116,8 +122,6 @@ def bidirectional_cg_optimizer(x, N, alpha=0.01, epsilon=1e-6, max_iter=100):
     return w, loss_history
 
 # Step 4: Loss Evolution Plot
-import matplotlib.pyplot as plt
-
 def plot_loss_evolution(loss_history):
     """
     Plots the loss function evolution over training iterations.
@@ -132,7 +136,7 @@ def plot_loss_evolution(loss_history):
     plt.plot(loss_history, label="Loss Evolution")
     plt.xlabel("Iterations")
     plt.ylabel("Loss Value")
-    plt.title("Loss Function Evolution with BiDCG")
+    plt.title("Loss Function Evolution with BiDCG and NSWF Regularization")
     plt.legend()
     plt.show()
 
@@ -141,7 +145,7 @@ if __name__ == "__main__":
     N = 1024  # Number of wavelet coefficients
     x_observed = np.random.randn(N)  # Simulated seismic data
 
-    optimized_w, loss_history = bidirectional_cg_optimizer(x_observed, N)
+    optimized_w, loss_history = bidirectional_cg_optimizer(x_observed, N, fs=100)
 
     # Plot loss evolution
     plot_loss_evolution(loss_history)
