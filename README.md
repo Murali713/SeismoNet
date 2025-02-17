@@ -3,7 +3,9 @@ Overview-SeismoNet: A Deep Learning Approach for Seismic Signal Denoising and De
 Repository Structure:
 
 This repository contains all the necessary files required for training, testing, and evaluating the SeismoNet model.
+
 Before running the project, install the necessary dependencies:
+
 Requirements include:
 TensorFlow/PyTorch,
 NumPy,
